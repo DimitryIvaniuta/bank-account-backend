@@ -13,17 +13,40 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * Service layer providing transactional operations for bank accounts.
+ * <p>
+ * Encapsulates business logic for creating, retrieving, updating,
+ * and deleting accounts, as well as performing deposit and withdrawal
+ * transactions and fetching account statements.
+ * </p>
+ */
 @Service
 @RequiredArgsConstructor
 public class AccountService {
+
+    /**
+     * Repository for CRUD operations on {@link Account} entities.
+     */
     private final AccountRepository accountRepo;
+
+    /**
+     * Repository for CRUD operations on {@link Operation} entities.
+     */
     private final OperationRepository operationRepo;
 
     /**
-     * Create a new account, optionally with an initial deposit.
+     * Creates a new account with an optional initial deposit.
+     * <p>
+     * Initializes the account with zero balance, persists it, and
+     * applies a deposit if {@code initialBalance} is greater than zero.
+     * </p>
+     *
+     * @param initialBalance the starting balance for the account; must be ≥ 0
+     * @return the persisted {@link Account} with updated balance and ID
      */
     @Transactional
-    public Account createAccount(BigDecimal initialBalance) {
+    public Account createAccount(final BigDecimal initialBalance) {
         var acct = new Account();
         acct.setBalance(BigDecimal.ZERO);
         acct.setCreatedAt(Instant.now());
@@ -35,14 +58,23 @@ public class AccountService {
         return acct;
     }
 
+    /**
+     * Retrieves an existing account by its identifier.
+     *
+     * @param id the unique identifier of the account
+     * @return the found {@link Account}
+     * @throws IllegalArgumentException if no account exists with the given ID
+     */
     @Transactional(readOnly = true)
-    public Account getAccount(Long id) {
+    public Account getAccount(final Long id) {
         return accountRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found: " + id));
     }
 
     /**
-     * READ all
+     * Retrieves all accounts in the system.
+     *
+     * @return a list of all {@link Account} entities
      */
     @Transactional(readOnly = true)
     public List<Account> getAllAccounts() {
@@ -50,11 +82,20 @@ public class AccountService {
     }
 
     /**
-     * Adjust balance to exactly newBalance.
-     * Internally routes through deposit/withdraw to record an operation.
+     * Updates the account balance to the specified amount.
+     * <p>
+     * Calculates the difference between {@code newBalance} and current balance,
+     * and performs a deposit or withdrawal operation accordingly to record the change.
+     * </p>
+     *
+     * @param accountId  the ID of the account to update
+     * @param newBalance the desired balance; must be ≥ 0
+     * @return the {@link Account} after balance adjustment
+     * @throws IllegalArgumentException if the account does not exist
+     * @throws IllegalStateException    if attempting to withdraw more than available
      */
     @Transactional
-    public Account updateAccountBalance(Long accountId, BigDecimal newBalance) {
+    public Account updateAccountBalance(final Long accountId, final BigDecimal newBalance) {
         Account acct = getAccount(accountId);
         BigDecimal oldBal = acct.getBalance();
         BigDecimal delta = newBalance.subtract(oldBal);
@@ -68,19 +109,28 @@ public class AccountService {
     }
 
     /**
-     * Delete an account and all its operations.
+     * Deletes the account and all associated operations.
+     *
+     * @param id the ID of the account to delete
      */
     @Transactional
-    public void deleteAccount(Long id) {
+    public void deleteAccount(final Long id) {
         operationRepo.deleteAllByAccountId(id);
         accountRepo.deleteById(id);
     }
 
     /**
-     * Deposit money
+     * Deposits a specified amount into an account.
+     * <p>
+     * Increases the account balance and records a deposit {@link Operation} entry.
+     * </p>
+     *
+     * @param accountId the ID of the account to debit
+     * @param amount    the amount to deposit; must be > 0
+     * @throws IllegalArgumentException if the account does not exist
      */
     @Transactional
-    public void deposit(Long accountId, BigDecimal amount) {
+    public void deposit(final Long accountId, final BigDecimal amount) {
         Account acct = getAccount(accountId);
         BigDecimal newBal = acct.getBalance().add(amount);
         acct.setBalance(newBal);
@@ -92,10 +142,19 @@ public class AccountService {
     }
 
     /**
-     * Withdraw money
+     * Withdraws a specified amount from an account.
+     * <p>
+     * Decreases the account balance if sufficient funds are available and
+     * records a withdrawal {@link Operation} entry.
+     * </p>
+     *
+     * @param accountId the ID of the account to credit
+     * @param amount    the amount to withdraw; must be > 0
+     * @throws IllegalArgumentException if the account does not exist
+     * @throws IllegalStateException    if insufficient funds are available
      */
     @Transactional
-    public void withdraw(Long accountId, BigDecimal amount) {
+    public void withdraw(final Long accountId, final BigDecimal amount) {
         Account acct = getAccount(accountId);
         if (acct.getBalance().compareTo(amount) < 0) {
             throw new IllegalStateException("Insufficient funds");
@@ -110,10 +169,13 @@ public class AccountService {
     }
 
     /**
-     * Statement history
+     * Retrieves the chronological list of operations for an account.
+     *
+     * @param accountId the ID of the account whose statement to fetch
+     * @return a list of {@link Operation} sorted by operation date ascending
      */
     @Transactional(readOnly = true)
-    public List<Operation> getStatement(Long accountId) {
+    public List<Operation> getStatement(final Long accountId) {
         return operationRepo.findByAccountIdOrderByOperationDateAsc(accountId);
     }
 }

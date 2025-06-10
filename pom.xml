@@ -18,8 +18,8 @@
     <groupId>com.github.dimitryivaniuta.bankaccount</groupId>
     <artifactId>bank-account-backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>Bank Account Kata Backend</name>
-    <description>Spring Boot backend for the Bank Account Kata (deposits, withdrawals, statements)</description>
+    <name>Bank Account Backend</name>
+    <description>Spring Boot backend for the Bank Account (deposits, withdrawals, statements)</description>
     <packaging>jar</packaging>
 
     <properties>

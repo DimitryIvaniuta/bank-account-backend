@@ -10,11 +10,15 @@ import com.github.dimitryivaniuta.bankaccount.model.OperationType;
 import com.github.dimitryivaniuta.bankaccount.repository.AccountRepository;
 import com.github.dimitryivaniuta.bankaccount.repository.OperationRepository;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
 
+@ExtendWith(MockitoExtension.class)
 class AccountServiceTest {
     @Mock
     AccountRepository accountRepo;
@@ -28,7 +32,6 @@ class AccountServiceTest {
 
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
         account = new Account(1L, BigDecimal.ZERO, null);
         when(accountRepo.findById(1L)).thenReturn(Optional.of(account));
     }
