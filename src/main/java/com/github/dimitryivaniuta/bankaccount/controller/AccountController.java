@@ -1,0 +1,59 @@
+package com.github.dimitryivaniuta.bankaccount.controller;
+
+import com.github.dimitryivaniuta.bankaccount.dto.DepositRequest;
+import com.github.dimitryivaniuta.bankaccount.dto.StatementResponse;
+import com.github.dimitryivaniuta.bankaccount.dto.WithdrawRequest;
+import com.github.dimitryivaniuta.bankaccount.service.AccountService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/accounts")
+@RequiredArgsConstructor
+@Validated
+public class AccountController {
+    private final AccountService accountService;
+
+    @PostMapping("/{id}/deposit")
+    public ResponseEntity<Void> deposit(
+            @PathVariable Long id,
+            @RequestBody @Valid DepositRequest req
+    ) {
+        accountService.deposit(id, req.getAmount());
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{id}/withdraw")
+    public ResponseEntity<Void> withdraw(
+            @PathVariable Long id,
+            @RequestBody @Valid WithdrawRequest req
+    ) {
+        accountService.withdraw(id, req.getAmount());
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{id}/statement")
+    public ResponseEntity<List<StatementResponse>> statement(@PathVariable Long id) {
+        var ops = accountService.getStatement(id);
+        var resp = ops.stream()
+                .map(op -> new StatementResponse(
+                        op.getOperationDate(),
+                        op.getType().name(),
+                        op.getAmount(),
+                        op.getBalanceAfter()
+                ))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(resp);
+    }
+}
