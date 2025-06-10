@@ -1,8 +1,6 @@
 spring:
-  profiles: test
-
   datasource:
-    url: jdbc:tc:postgresql:15-alpine:///bank_test
+    url: jdbc:tc:postgresql:latest:///bank_test
     username: test
     password:
     driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver

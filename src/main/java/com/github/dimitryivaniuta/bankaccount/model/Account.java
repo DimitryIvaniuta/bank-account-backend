@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -21,8 +22,11 @@ import java.time.Instant;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Account {
+
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "BA_UNIQUE_ID")
+    @SequenceGenerator(name = "BA_UNIQUE_ID", sequenceName = "BA_UNIQUE_ID", allocationSize = 1)
+    @Column(name = "id", nullable = false)
     private Long id;
 
     @Column(nullable = false)

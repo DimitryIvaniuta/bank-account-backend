@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface OperationRepository extends JpaRepository<Operation, Long> {
     List<Operation> findByAccountIdOrderByOperationDateAsc(Long accountId);
+    void deleteAllByAccountId(Long accountId);
 }
