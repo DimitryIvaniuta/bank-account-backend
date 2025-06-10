@@ -3,7 +3,7 @@
 [![Build Status](https://github.com/DimitryIvaniuta/bank-account-backend/actions/workflows/maven.yml/badge.svg)](https://github.com/DimitryIvaniuta/bank-account-backend/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A **Spring Boot** backend implementing the classic **Bank Account Kata**:
+A **Spring Boot** backend implementing **Bank Account Operations**:
 
 * Create, read, update & delete bank accounts
 * Deposit & withdrawal operations
