@@ -1,16 +1,71 @@
-services:
-  db:
-    image: postgres:latest
-    container_name: bank-account-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: bank
-      POSTGRES_USER: bank_user
-      POSTGRES_PASSWORD: bank_pass
-    ports:
-      - "5444:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
 
+services:
+  # PostgreSQL Database Service
+  # Defines a service named 'db' for the PostgreSQL container
+  db:
+    # Docker image tag to use (latest stable PostgreSQL release)
+    image: postgres:latest
+    # Friendly container name for CLI operations
+    container_name: bank-account-db
+    # Restart policy: always restart unless container is explicitly stopped
+    restart: unless-stopped
+    # Environment variables for initial setup of the database
+    environment:
+      # Name of the default database created at startup
+      POSTGRES_DB: bank
+      # Username for authenticating to the database
+      POSTGRES_USER: bank_user
+      # Password corresponding to the above user
+      POSTGRES_PASSWORD: bank_pass
+
+    # Port mappings between host and container
+    ports:
+      # Map host port 5444 to container port 5432 (PostgreSQL default)
+      - "5444:5432"
+    # Volume mappings for persistent data storage
+    volumes:
+      # Named volume 'db_data' persists the database files
+      - db_data:/var/lib/postgresql/data
+    # Attach this service to a user-defined network
+    networks:
+      # Allows other services to resolve 'db' hostname
+      - bank-net
+
+  # Defines a service named 'app' for the Spring Boot application
+  app:
+    # Build context: uses Dockerfile in the current directory
+    build: .
+    # Friendly container name for CLI operations
+    container_name: bank-account-app
+    # Restart policy: restart container on failure (exit code != 0)
+    restart: on-failure
+    # Dependency ensures 'db' starts before 'app'
+    depends_on:
+      - db
+    # Port mappings between host and container
+    ports:
+      # Map host port 8080 to container port 8080 (Spring Boot default)
+      - "8080:8080"
+    # Environment variables to configure Spring Boot at runtime
+    environment:
+      # JDBC connection URL pointing to the 'db' service on default port
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/bank
+      # DB username must match POSTGRES_USER above
+      SPRING_DATASOURCE_USERNAME: bank_user
+      # DB password must match POSTGRES_PASSWORD above
+      SPRING_DATASOURCE_PASSWORD: bank_pass
+      # Hibernate DDL auto mode (validate only, no schema changes)
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+      # Enable Flyway migrations at application startup
+      SPRING_FLYWAY_ENABLED: 'true'
+    # Attach the application to the same user-defined network
+    networks:
+      - bank-net
+# External volumes for persisting container data
 volumes:
+  # Volume to store PostgreSQL data outside the container lifecycle
   db_data:
+
+# User-defined bridge network for inter-service communication
+networks:
+  bank-net:
