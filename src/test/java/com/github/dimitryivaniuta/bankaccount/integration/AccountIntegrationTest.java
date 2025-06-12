@@ -19,28 +19,50 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThatList;
 
 /**
  * Integration tests for AccountService, exercising the full Spring Boot context,
  * Flyway migrations, and a Testcontainers–managed PostgreSQL database.
  */
-@SpringBootTest(classes = BankAccountApplication.class,
+// 1. Bootstraps a full Spring ApplicationContext for integration testing:
+//    This gives you all beans (services, repos, Flyway migration, Testcontainers JDBC driver, etc.)
+//    without listening on HTTP ports.
+@SpringBootTest(
+        // - classes = BankAccountApplication.class tells Spring Boot which @SpringBootApplication to start.
+        classes = BankAccountApplication.class,
+        // - webEnvironment = NONE prevents starting an embedded web server.
         webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// 2. Activate the "test" profile so that application-test.yml is loaded,
+//    pointing the datasource to the jdbc:tc:postgresql URL (Testcontainers).
 @ActiveProfiles("test")
+// 3. Use a single TestInstance per class (instead of the default per-method).
+//    This allows @BeforeAll and @AfterAll to be non-static if needed,
+//    and can improve performance by reusing the same test instance.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountIntegrationTest {
 
+    // 4. Inject the real AccountService bean from the Spring context.
+    //    This service is wired to the Testcontainers PostgreSQL instance,
+    //    Flyway has already run migrations, and TransactionManager is active.
     @Autowired
     private AccountService accountService;
 
+    // 5. Inject the JPA repository for Account.
+    //    Enables direct database assertions and manual cleanup.
     @Autowired
     private AccountRepository accountRepository;
 
+    // 6. Inject the JPA repository for Operation.
     @Autowired
     private OperationRepository operationRepository;
 
     /**
-     * Clean out all data before each test to ensure isolation.
+     * 7. Runs **before each** @Test method:
+     *    Clean out all data to ensure isolation.
+     *    - Deletes **all** Operation rows.
+     *    - Deletes **all** Account rows.
+     *    This ensures **complete isolation**: each test starts with an empty schema.
      */
     @BeforeEach
     void cleanDatabase() {
@@ -49,7 +71,9 @@ class AccountIntegrationTest {
     }
 
     /**
-     * Verifies that the Spring context loads and key beans are present.
+     * 8. A smoke test to verify that the Spring context loads successfully
+     *    and that the key beans (service + repositories) are present.
+     *    If this fails, none of the subsequent tests will run.
      */
     @Test
     @DisplayName("Context loads with AccountService and repositories")
@@ -60,58 +84,67 @@ class AccountIntegrationTest {
     }
 
     /**
-     * Tests creating an account with an initial balance.
-     * Expects that an Account row is inserted and a single DEPOSIT operation is recorded.
+     * 9. Tests the **createAccount** workflow end-to-end:
+     *    - accountService.createAccount(initialBalance) writes a row to `account`
+     *      and, because initialBalance > 0, writes a `DEPOSIT` row to `operation`.
+     *    - We then assert:
+     *      * The returned Account has a generated ID and correct balance.
+     *      * The Operation table contains exactly one row with type=DEPOSIT,
+     *        amount=initialBalance, balanceAfter=initialBalance.
      */
     @Test
     @DisplayName("Create account with initial balance")
     void createAccountWithInitialBalance() {
         Account acct = accountService.createAccount(new BigDecimal("123.45"));
 
-        // Account persisted
+        // Verify account row. Account persisted
         assertThat(acct.getId()).isNotNull();
         assertThat(acct.getBalance()).isEqualByComparingTo("123.45");
 
-        // One operation recorded
+        // Verify exactly one deposit operation was recorded. One operation recorded
         List<Operation> ops = operationRepository.findByAccountIdOrderByOperationDateAsc(acct.getId());
-        assertThat(ops)
+        assertThatList(ops)
                 .hasSize(1)
                 .allSatisfy(op -> {
                     assertThat(op.getType()).isEqualTo(OperationType.DEPOSIT);
-                    assertThat(op.getAmount()).isEqualByComparingTo("123.45");
-                    assertThat(op.getBalanceAfter()).isEqualByComparingTo("123.45");
+                    assertThat(op.getAmount()).isEqualByComparingTo(BigDecimal.valueOf(123.45));
+                    assertThat(op.getBalanceAfter()).isEqualByComparingTo(BigDecimal.valueOf(123.45));
                 });
     }
 
     /**
-     * Tests deposit, withdrawal, and statement retrieval.
-     * - Deposit 200.00
-     * - Withdraw 50.00
-     * - Statement should contain two entries in chronological order.
+     * 10. Tests deposit(), withdraw(), and getStatement():
+     *     - Creates an empty account
+     *     - Calls deposit(200), withdraw(50)
+     *     - Verifies final balance = 150
+     *     - Verifies getStatement returns two chronologically-ordered operations
+     *       with correct types, amounts, and balances.
      */
     @Test
     @DisplayName("Deposit, withdraw, and verify statement")
     void depositWithdrawAndStatement() {
-        // Given a new account
+        // Given an empty account
         Account acct = accountService.createAccount(BigDecimal.ZERO);
 
-        // When
+        // When: perform domain operations
         accountService.deposit(acct.getId(), new BigDecimal("200.00"));
         accountService.withdraw(acct.getId(), new BigDecimal("50.00"));
 
-        // Then balance is correct
+        // Then: final balance check
         Account updated = accountRepository.findById(acct.getId()).orElseThrow();
         assertThat(updated.getBalance()).isEqualByComparingTo("150.00");
 
-        // And statement has two ops
+        // And: statement correctness
         List<Operation> ops = accountService.getStatement(acct.getId());
         assertThat(ops).hasSize(2);
 
-        Operation first = ops.get(0);
+        // First operation: deposit
+        Operation first = ops.getFirst();
         assertThat(first.getType()).isEqualTo(OperationType.DEPOSIT);
         assertThat(first.getAmount()).isEqualByComparingTo("200.00");
         assertThat(first.getBalanceAfter()).isEqualByComparingTo("200.00");
 
+        // Second operation: withdrawal
         Operation second = ops.get(1);
         assertThat(second.getType()).isEqualTo(OperationType.WITHDRAWAL);
         assertThat(second.getAmount()).isEqualByComparingTo("-50.00");
@@ -119,8 +152,10 @@ class AccountIntegrationTest {
     }
 
     /**
-     * Tests updating the account to an exact new balance via delta logic.
-     * Expects that the service computes the correct delta and records it.
+     * 11. Tests updateAccountBalance(...) which applies a **delta**:
+     *     - Starting from 100, update to 180 -> should deposit 80
+     *     - Then update to 140 -> should withdraw 40
+     *     Verifies both the returned balance and the appended Operation entries.
      */
     @Test
     @DisplayName("Update account balance via delta (deposit/withdraw)")
@@ -145,7 +180,10 @@ class AccountIntegrationTest {
     }
 
     /**
-     * Tests deleting an account: operations should be cascaded/deleted first, then the account.
+     * 12. Tests deleteAccount(id):
+     *     - Deletes all Operation rows for that account
+     *     - Deletes the Account row itself
+     *     - Verifies neither account nor operations remain.
      */
     @Test
     @DisplayName("Delete account and its operations")
@@ -156,12 +194,14 @@ class AccountIntegrationTest {
         List<Operation> before = accountService.getStatement(acct.getId());
         assertThat(before).hasSize(2);
 
-        // When
+        // When: delete
         accountService.deleteAccount(acct.getId());
 
-        // Then account gone
-        assertThat(accountRepository.findById(acct.getId())).isEmpty();
+        // Then: neither account nor operations exist
+        assertThat(accountRepository.findById(acct.getId()))
+                .isEmpty();
         // And no operations remain
-        assertThat(operationRepository.findByAccountIdOrderByOperationDateAsc(acct.getId())).isEmpty();
+        assertThat(operationRepository.findByAccountIdOrderByOperationDateAsc(acct.getId()))
+                .isEmpty();
     }
 }
