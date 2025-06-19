@@ -1,14 +1,15 @@
-# Bank Account Backend
+# Bank Account Backend with Multi-Currency Support
 
 [![Build Status](https://github.com/DimitryIvaniuta/bank-account-backend/actions/workflows/maven.yml/badge.svg)](https://github.com/DimitryIvaniuta/bank-account-backend/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A **Spring Boot** backend implementing **Bank Account Operations**:
+A **Spring Boot 3.5** backend implementing the classic **Bank Account Kata**, now enhanced with full **multi-currency** support:
 
 * Create, read, update & delete bank accounts
-* Deposit & withdrawal operations
-* Account statement history
-* Java 21 · Spring Boot 3.2 · PostgreSQL · Flyway · Lombok · Maven · JUnit 5 & Testcontainers
+* **Deposit & withdrawal** operations in *any* ISO-4217 currency
+* **Automatic FX conversion** via JSR‑354 (Moneta) + ECB exchange rates
+* **Account statement** history (date, type, amount, resulting balance + currency)
+* Java 21 · Spring Boot · PostgreSQL · Flyway · Lombok · Maven · JUnit 5 · Mockito · Testcontainers
 
 ---
 
@@ -19,10 +20,11 @@ A **Spring Boot** backend implementing **Bank Account Operations**:
 * [Getting Started](#getting-started)
 
   * [Clone & Build](#clone--build)
-  * [Database with Docker Compose](#database-with-docker-compose)
+  * [Database](#database)
   * [Configuration](#configuration)
   * [Run the Application](#run-the-application)
 * [API Reference](#api-reference)
+* [Domain & Persistence](#domain--persistence)
 * [Testing](#testing)
 * [Contributing](#contributing)
 * [License](#license)
@@ -31,20 +33,22 @@ A **Spring Boot** backend implementing **Bank Account Operations**:
 
 ## Features
 
-* **Account CRUD**: create accounts (with optional initial deposit), retrieve single/all accounts, update balance exactly, delete accounts
-* **Transactions**: deposit & withdrawal endpoints, each recorded in `operation` history
-* **Statement**: fetch chronological list of operations (date, type, amount, resulting balance)
-* **Persistence**: PostgreSQL + Flyway migrations
-* **Quality**: unit tests (Mockito), integration tests (Testcontainers), code generation via Lombok
-* **Build**: Maven wrapper for reproducible builds
+* **Account CRUD**: create accounts (with optional initial deposit), retrieve, update balance exactly, delete
+* **Multi-Currency**: deposit/withdraw in any supported currency; backend stores all balances in account’s native currency
+* **JSR‑354 Standard**: uses `MonetaryAmount` and `CurrencyUnit` via Moneta
+* **FX Conversion**: real‑time ECB exchange rates with Moneta‑Convert
+* **Embeddable MoneyValue**: persisting `amount` + `currency` in a single JPA embeddable
+* **Operations History**: each deposit/withdrawal is recorded with amount, currency, timestamp, and post‑balance
+* **Flyway Migrations**: database evolution scripts, including `VARCHAR(3)` currency column
+* **Testing**: unit tests (Mockito), integration tests (Testcontainers)
 
 ---
 
 ## Prerequisites
 
-* **Java 21 JDK**
-* **Maven 3.8+** (or use bundled Maven wrapper: `./mvnw`)
-* **Docker & Docker Compose** (for local PostgreSQL)
+* **Java 21** (JDK)
+* **Maven 3.8+** (or use `./mvnw` wrapper)
+* **Docker & Docker Compose** (for PostgreSQL in development / CI)
 
 ---
 
@@ -58,27 +62,27 @@ cd bank-account-backend
 ./mvnw clean verify
 ```
 
-### Database with Docker Compose
+### Database
+
+Start PostgreSQL via Docker Compose (development profile):
 
 ```bash
-docker-compose up -d
+docker-compose -f docker-compose-db.yml up -d
 ```
 
-This starts a `postgres:15-alpine` container exposing port **5444**:
+* **Image**: `postgres:15-alpine`
+* **DB**: `bank` · **User**: `bank_user` · **Pass**: `bank_pass`
+* **Ports**: host `5444` → container `5432`
 
-* **DB**: `bank`
-* **User**: `bank_user`
-* **Password**: `bank_pass`
-
-Tear down when done:
+Tear down:
 
 ```bash
-docker-compose down
+docker-compose -f docker-compose-db.yml down
 ```
 
 ### Configuration
 
-**`src/main/resources/application.yml`**:
+**`src/main/resources/application.yml`** (production/dev):
 
 ```yaml
 spring:
@@ -96,7 +100,7 @@ server:
   port: 8080
 ```
 
-**`src/main/resources/application-test.yml`**:
+**`src/main/resources/application-test.yml`** (integration tests):
 
 ```yaml
 spring:
@@ -114,50 +118,73 @@ spring:
 ./mvnw spring-boot:run
 ```
 
-The API base URL is `http://localhost:8080/api/accounts`.
+The API will be available at `http://localhost:8080/api/accounts`.
 
 ---
 
 ## API Reference
 
+All endpoints accept/produce JSON.
 
-| Operation              | HTTP                               | Body                           | Response             |
-| ---------------------- | ---------------------------------- | ------------------------------ | -------------------- |
-| Create account         | `POST /api/accounts`               | `{ "initialBalance": 100.00 }` | `201 Created` + body |
-| List all accounts      | `GET /api/accounts`                | —                             | `200 OK` + array     |
-| Get one account        | `GET /api/accounts/{id}`           | —                             | `200 OK` + object    |
-| Update balance exactly | `PUT /api/accounts/{id}`           | `{ "newBalance": 150.00 }`     | `200 OK` + object    |
-| Delete account         | `DELETE /api/accounts/{id}`        | —                             | `204 No Content`     |
-| Deposit                | `POST /api/accounts/{id}/deposit`  | `{ "amount": 50.00 }`          | `200 OK`             |
-| Withdraw               | `POST /api/accounts/{id}/withdraw` | `{ "amount": 20.00 }`          | `200 OK`             |
-| Get account statement  | `GET /api/accounts/{id}/statement` | —                             | `200 OK` + array     |
+| Operation              | HTTP                               | Body example                                | Response                               |
+| ---------------------- | ---------------------------------- | ------------------------------------------- | -------------------------------------- |
+| Create account         | POST `/api/accounts`               | `{"initialAmount":100.00,"currency":"USD"}` | `201 Created` + `AccountResponse`      |
+| List all accounts      | GET `/api/accounts`                | —                                           | `200 OK` + list                        |
+| Get one account        | GET `/api/accounts/{id}`           | —                                           | `200 OK` + `AccountResponse`           |
+| Update balance exactly | PUT `/api/accounts/{id}`           | `{"targetAmount":150.00,"currency":"EUR"}`  | `200 OK` + `AccountResponse`           |
+| Delete account         | DELETE `/api/accounts/{id}`        | —                                           | `204 No Content`                       |
+| Deposit                | POST `/api/accounts/{id}/deposit`  | `{"amount":50.00,"currency":"GBP"}`         | `200 OK`                               |
+| Withdraw               | POST `/api/accounts/{id}/withdraw` | `{"amount":20.00,"currency":"JPY"}`         | `200 OK`                               |
+| Statement              | GET `/api/accounts/{id}/statement` | —                                           | `200 OK` + list of `StatementResponse` |
 
-*Example deposit*:
+**Example Deposit**:
 
 ```bash
 curl -X POST http://localhost:8080/api/accounts/1/deposit \
   -H "Content-Type: application/json" \
-  -d '{"amount":50.00}'
+  -d '{"amount":50.00,"currency":"GBP"}'
 ```
+
+---
+
+## Domain & Persistence
+
+* **`Account`** entity embeds `MoneyValue` (fields: `amount DECIMAL(19,4)`, `currency VARCHAR(3)`).
+* **`Operation`** entity embeds two `MoneyValue` (for transaction amount and post‑balance) and is linked to `Account`.
+* **`MoneyValue`** is an `@Embeddable` wrapping `BigDecimal amount` + `CurrencyUnit currency` with a JPA converter.
+* **FX Conversion**: `AccountService` uses `MonetaryConversions.getExchangeRateProvider("ECB")` to convert incoming amounts into the account’s native currency.
 
 ---
 
 ## Testing
 
-* **Unit tests**: run `./mvnw test`
-* **Integration tests**: run `./mvnw verify` (starts Testcontainers)
+* **Unit Tests**: JUnit 5 + Mockito cover `AccountService` logic, using `MoneyValue` and `MonetaryAmount` assertions.
+* **Integration Tests**: Spring Boot + Testcontainers start an ephemeral PostgreSQL, run Flyway migrations, and exercise the full service via `AccountService` directly.
+
+Run tests locally:
+
+```bash
+./mvnw test       # unit only
+./mvnw verify     # includes integration tests
+```
 
 ---
 
 ## Contributing
 
-1. Fork the repo
-2. Create a branch: `git checkout -b feature/xyz`
-3. Commit your changes
-4. Push: `git push origin feature/xyz`
-5. Open a Pull Request
+1. Fork repository
+2. Create feature branch: `git checkout -b feature/my-feature`
+3. Commit: \`git commit -am "feat: add..."
+4. Push: `git push origin feature/my-feature`
+5. Open Pull Request
 
-Please follow code conventions and include tests.
+Please adhere to existing code style, add tests for new logic, and document any breaking changes in the README.
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 
 ---
 
