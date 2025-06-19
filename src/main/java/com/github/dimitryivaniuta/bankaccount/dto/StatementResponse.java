@@ -51,6 +51,11 @@ public class StatementResponse {
     private BigDecimal amount;
 
     /**
+     * ISO-4217 currency code of the operation amount and resulting balance.
+     */
+    private String currency;
+
+    /**
      * The account balance immediately after the operation was applied.
      * <p>
      * Reflects the updated balance state post-transaction,

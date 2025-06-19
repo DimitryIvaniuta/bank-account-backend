@@ -1,6 +1,9 @@
 package com.github.dimitryivaniuta.bankaccount.model;
 
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.AttributeOverrides;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -68,7 +71,7 @@ public class Operation {
      */
     @Enumerated(EnumType.ORDINAL)
     @Column(nullable = false)
-    private OperationType type = OperationType.DEPOSIT;
+    private OperationType type;
 
     /**
      * Monetary amount of the operation.
@@ -77,8 +80,10 @@ public class Operation {
      * Represented with two decimal precision in the account's currency.
      * </p>
      */
-    @Column(nullable = false)
-    private BigDecimal amount;
+    @Embedded
+    @AttributeOverride(name = "amount", column = @Column(name = "amount", nullable = false, precision = 19, scale = 4))
+    @AttributeOverride(name = "currency", column = @Column(name = "currency", length = 3, nullable = false))
+    private MoneyValue funds;
 
     /**
      * Timestamp when the operation was executed.
@@ -87,7 +92,7 @@ public class Operation {
      * </p>
      */
     @Column(name = "operation_date", nullable = false)
-    private Instant operationDate = Instant.now();
+    private Instant operationDate;
 
     /**
      * Account balance immediately after this operation was applied.
@@ -95,29 +100,28 @@ public class Operation {
      * Shows the new balance state resulting from this transaction.
      * </p>
      */
-    @Column(name = "balance_after", nullable = false)
-    private BigDecimal balanceAfter;
+    @Embedded
+    @AttributeOverride(name = "amount", column = @Column(name = "balance_after", nullable = false, precision = 19, scale = 4))
+    @AttributeOverride(name = "currency", column = @Column(name = "balance_currency", length = 3, nullable = false))
+    private MoneyValue balanceAfter;
 
     /**
      * All-args constructor for creating Operation instances in tests or internal code.
      *
-     * @param id             the unique identifier of the operation
-     * @param account        the account associated with this operation
-     * @param type           the type of operation (deposit or withdrawal)
-     * @param amount         the amount transacted
-     * @param operationDate  the timestamp when the operation occurred
-     * @param balanceAfter   the resulting account balance after the operation
+     * @param account       the account associated with this operation
+     * @param type          the type of operation (deposit or withdrawal)
+     * @param amount        monetary amount (with currency)
+     * @param operationDate the timestamp when the operation occurred
+     * @param balanceAfter  resulting balance (with currency)
      */
-    public Operation(final Long id,
-                     final Account account,
+    public Operation(final Account account,
                      final OperationType type,
-                     final BigDecimal amount,
+                     final MoneyValue amount,
                      final Instant operationDate,
-                     final BigDecimal balanceAfter) {
-        this.id = id;
+                     final MoneyValue balanceAfter) {
         this.account = account;
         this.type = type;
-        this.amount = amount;
+        this.funds = amount;
         this.operationDate = operationDate;
         this.balanceAfter = balanceAfter;
     }

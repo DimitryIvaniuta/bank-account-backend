@@ -1,6 +1,7 @@
 package com.github.dimitryivaniuta.bankaccount.model;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -47,14 +48,10 @@ public class Account {
     private Long id;
 
     /**
-     * Current balance of the account.
-     * <p>
-     * Stored with two-decimal precision to represent the major currency unit.
-     * Defaults to zero when the account is created.
-     * </p>
+     * The account’s balance and currency, stored together.
      */
-    @Column(nullable = false)
-    private BigDecimal balance = BigDecimal.ZERO;
+    @Embedded
+    private MoneyValue balance = MoneyValue.zero();
 
     /**
      * Timestamp when the account was created.

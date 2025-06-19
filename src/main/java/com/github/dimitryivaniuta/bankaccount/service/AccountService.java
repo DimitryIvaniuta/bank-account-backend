@@ -1,6 +1,7 @@
 package com.github.dimitryivaniuta.bankaccount.service;
 
 import com.github.dimitryivaniuta.bankaccount.model.Account;
+import com.github.dimitryivaniuta.bankaccount.model.MoneyValue;
 import com.github.dimitryivaniuta.bankaccount.model.Operation;
 import com.github.dimitryivaniuta.bankaccount.model.OperationType;
 import com.github.dimitryivaniuta.bankaccount.repository.AccountRepository;
@@ -9,7 +10,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
+import javax.money.CurrencyUnit;
+import javax.money.MonetaryAmount;
+import javax.money.convert.CurrencyConversion;
+import javax.money.convert.ExchangeRateProvider;
+import javax.money.convert.MonetaryConversions;
 import java.time.Instant;
 import java.util.List;
 
@@ -36,32 +41,40 @@ public class AccountService {
     private final OperationRepository operationRepo;
 
     /**
+     * Provider for exchange rates (ECB) to perform currency conversions.
+     */
+    private final ExchangeRateProvider rateProvider =
+            MonetaryConversions.getExchangeRateProvider("ECB");
+
+    /**
      * Creates a new account with an optional initial deposit.
      * <p>
-     * Initializes the account with zero balance, persists it, and
-     * applies a deposit if {@code initialBalance} is greater than zero.
+     * Initializes balance to zero in default currency (EUR). Applies a deposit
+     * for any positive initial amount, converting currencies if necessary.
      * </p>
      *
-     * @param initialBalance the starting balance for the account; must be ≥ 0
-     * @return the persisted {@link Account} with updated balance and ID
+     * @param initialAmount the initial deposit amount (can be zero or in any currency)
+     * @return the persisted {@link Account} with its generated ID and balance
      */
     @Transactional
-    public Account createAccount(final BigDecimal initialBalance) {
-        var acct = new Account();
-        acct.setBalance(BigDecimal.ZERO);
+    public Account createAccount(final MonetaryAmount initialAmount) {
+        Account acct = new Account();
+        acct.setBalance(MoneyValue.zero());
         acct.setCreatedAt(Instant.now());
         acct = accountRepo.save(acct);
-        if (initialBalance.compareTo(BigDecimal.ZERO) > 0) {
-            deposit(acct.getId(), initialBalance);
-            acct = accountRepo.findById(acct.getId()).orElseThrow();
+
+        if (initialAmount.isPositive()) {
+            deposit(acct.getId(), initialAmount);
+            acct = accountRepo.findById(acct.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("Account not found after create"));
         }
         return acct;
     }
 
     /**
-     * Retrieves an existing account by its identifier.
+     * Retrieves an existing account by its ID.
      *
-     * @param id the unique identifier of the account
+     * @param id the unique ID of the account
      * @return the found {@link Account}
      * @throws IllegalArgumentException if no account exists with the given ID
      */
@@ -82,30 +95,39 @@ public class AccountService {
     }
 
     /**
-     * Updates the account balance to the specified amount.
+     * Updates account balance to an exact target amount.
      * <p>
-     * Calculates the difference between {@code newBalance} and current balance,
-     * and performs a deposit or withdrawal operation accordingly to record the change.
+     * Computes the delta from current balance and applies deposit or withdrawal
+     * so the change is recorded as an operation.
      * </p>
      *
-     * @param accountId  the ID of the account to update
-     * @param newBalance the desired balance; must be ≥ 0
-     * @return the {@link Account} after balance adjustment
-     * @throws IllegalArgumentException if the account does not exist
-     * @throws IllegalStateException    if attempting to withdraw more than available
+     * @param accountId    the ID of the account
+     * @param targetAmount the desired balance as {@link MonetaryAmount}
+     * @return the updated {@link Account}
      */
     @Transactional
-    public Account updateAccountBalance(final Long accountId, final BigDecimal newBalance) {
+    public Account updateAccountBalance(final Long accountId, final MonetaryAmount targetAmount) {
         Account acct = getAccount(accountId);
-        BigDecimal oldBal = acct.getBalance();
-        BigDecimal delta = newBalance.subtract(oldBal);
+        MonetaryAmount current = acct.getBalance().toMonetaryAmount();
+        CurrencyUnit acctCcy = current.getCurrency();
 
-        if (delta.compareTo(BigDecimal.ZERO) > 0) {
-            deposit(accountId, delta);
-        } else if (delta.compareTo(BigDecimal.ZERO) < 0) {
-            withdraw(accountId, delta.abs());
+        // Convert target to account currency if needed
+        MonetaryAmount desired = targetAmount;
+        if (!desired.getCurrency().equals(acctCcy)) {
+            CurrencyConversion conversion = rateProvider.getCurrencyConversion(acctCcy);
+            desired = desired.with(conversion);
         }
-        return accountRepo.findById(accountId).orElseThrow();
+
+        // Compute delta
+        MonetaryAmount delta = desired.subtract(current);
+        if (delta.isPositive()) {
+            deposit(accountId, delta);
+        } else if (delta.isNegative()) {
+            withdraw(accountId, delta.negate());
+        }
+
+        return accountRepo.findById(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("Account not found: " + accountId));
     }
 
     /**
@@ -119,55 +141,82 @@ public class AccountService {
         accountRepo.deleteById(id);
     }
 
+
     /**
-     * Deposits a specified amount into an account.
-     * <p>
-     * Increases the account balance and records a deposit {@link Operation} entry.
-     * </p>
+     * Deposits a monetary amount into an account, converting currency if needed.
+     * Records a DEPOSIT operation.
      *
-     * @param accountId the ID of the account to debit
-     * @param amount    the amount to deposit; must be > 0
-     * @throws IllegalArgumentException if the account does not exist
+     * @param accountId   the account to credit
+     * @param incomingAmt the amount to deposit (in any currency)
      */
     @Transactional
-    public void deposit(final Long accountId, final BigDecimal amount) {
-        Account acct = getAccount(accountId);
-        BigDecimal newBal = acct.getBalance().add(amount);
-        acct.setBalance(newBal);
-        acct = accountRepo.save(acct);
+    public void deposit(final Long accountId, final MonetaryAmount incomingAmt) {
+        Account account = getAccount(accountId);
+        MonetaryAmount current = account.getBalance().toMonetaryAmount();
+        CurrencyUnit acctCcy = current.getCurrency();
 
-        operationRepo.save(new Operation(
-                null, acct, OperationType.DEPOSIT, amount, Instant.now(), newBal
-        ));
+        // Convert incomingAmt to account currency
+        MonetaryAmount toDeposit = incomingAmt;
+        if (!incomingAmt.getCurrency().equals(acctCcy)) {
+            CurrencyConversion conversion = rateProvider.getCurrencyConversion(acctCcy);
+            toDeposit = incomingAmt.with(conversion);
+        }
+
+        // Update balance
+        MonetaryAmount updated = current.add(toDeposit);
+        account.setBalance(MoneyValue.from(updated));
+        accountRepo.save(account);
+
+        // Record operation
+        Operation op = new Operation(
+                account,
+                OperationType.DEPOSIT,
+                MoneyValue.from(toDeposit),
+                Instant.now(),
+                MoneyValue.from(updated)
+        );
+        operationRepo.save(op);
     }
 
     /**
-     * Withdraws a specified amount from an account.
-     * <p>
-     * Decreases the account balance if sufficient funds are available and
-     * records a withdrawal {@link Operation} entry.
-     * </p>
+     * Withdraws a monetary amount from an account, converting currency if needed.
+     * Records a WITHDRAWAL operation. Throws if insufficient funds.
      *
-     * @param accountId the ID of the account to credit
-     * @param amount    the amount to withdraw; must be > 0
-     * @throws IllegalArgumentException if the account does not exist
-     * @throws IllegalStateException    if insufficient funds are available
+     * @param accountId   the account to debit
+     * @param incomingAmt the amount to withdraw (in any currency)
+     * @throws IllegalStateException if balance < withdrawal amount
      */
     @Transactional
-    public void withdraw(final Long accountId, final BigDecimal amount) {
-        Account acct = getAccount(accountId);
-        if (acct.getBalance().compareTo(amount) < 0) {
+    public void withdraw(final Long accountId, final MonetaryAmount incomingAmt) {
+        Account account = getAccount(accountId);
+        MonetaryAmount current = account.getBalance().toMonetaryAmount();
+        CurrencyUnit acctCcy = current.getCurrency();
+
+        MonetaryAmount toWithdraw = incomingAmt;
+        if (!incomingAmt.getCurrency().equals(acctCcy)) {
+            CurrencyConversion conversion = rateProvider.getCurrencyConversion(acctCcy);
+            toWithdraw = incomingAmt.with(conversion);
+        }
+
+        if (current.isLessThan(toWithdraw)) {
             throw new IllegalStateException("Insufficient funds");
         }
-        BigDecimal newBal = acct.getBalance().subtract(amount);
-        acct.setBalance(newBal);
-        acct = accountRepo.save(acct);
 
-        operationRepo.save(new Operation(
-                null, acct, OperationType.WITHDRAWAL, amount.negate(), Instant.now(), newBal
-        ));
+        // Update balance
+        MonetaryAmount updated = current.subtract(toWithdraw);
+        account.setBalance(MoneyValue.from(updated));
+        accountRepo.save(account);
+
+        // Record operation with negative amount
+        Operation op = new Operation(
+                account,
+                OperationType.WITHDRAWAL,
+                MoneyValue.from(toWithdraw.negate()),
+                Instant.now(),
+                MoneyValue.from(updated)
+        );
+        operationRepo.save(op);
     }
-
     /**
      * Retrieves the chronological list of operations for an account.
      *

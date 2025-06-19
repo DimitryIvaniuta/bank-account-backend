@@ -1,7 +1,9 @@
 package com.github.dimitryivaniuta.bankaccount.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -21,7 +23,7 @@ import java.math.BigDecimal;
 public class DepositRequest {
 
     /**
-     * Amount to deposit into the account.
+     * Amount to deposit; must be positive.
      * <p>
      * Must be non-null and strictly greater than 0.
      * Represented in the currency's major unit with two decimal places.
@@ -31,7 +33,14 @@ public class DepositRequest {
      *   <li>{@link Positive} enforces a value > 0.</li>
      * </ul>
      */
-    @NotNull
-    @Positive
+    @NotNull(message = "Amount is required")
+    @Positive(message = "Deposit amount must be > 0")
     private BigDecimal amount;
+
+    /**
+     * ISO-4217 currency code of the deposit (e.g., "GBP").
+     */
+    @NotBlank(message = "Currency is required")
+    @Size(min = 3, max = 3, message = "Currency must be a 3-letter ISO code")
+    private String currency;
 }

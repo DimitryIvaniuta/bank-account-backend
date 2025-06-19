@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:latest
+    container_name: bank-account-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: bank_user
+      POSTGRES_PASSWORD: bank_pass
+    ports:
+      - "5444:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:

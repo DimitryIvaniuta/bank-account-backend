@@ -25,7 +25,13 @@ public class AccountResponse {
      * Current balance of the account, represented in the currency's
      * major unit (e.g., dollars). Precision is 2 decimal places.
      */
-    private BigDecimal balance;
+    private BigDecimal amount;
+
+    /**
+     * Current currency code of the account (e.g., EUR, USD).
+     */
+    private String currencyCode;
+
 
     /**
      * Timestamp indicating when the account was created.

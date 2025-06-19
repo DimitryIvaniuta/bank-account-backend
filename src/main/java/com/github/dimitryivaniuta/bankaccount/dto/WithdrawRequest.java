@@ -1,11 +1,17 @@
 package com.github.dimitryivaniuta.bankaccount.dto;
 
 import java.math.BigDecimal;
+import java.util.Currency;
+
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import javax.money.MonetaryAmount;
 
 /**
  * Request DTO for withdrawing funds from an existing bank account.
@@ -15,7 +21,7 @@ import lombok.NoArgsConstructor;
  * enforce sufficient balance before performing the withdrawal.
  * </p>
  *
- * @see com.github.dimitryivaniuta.bankaccount.service.AccountService#withdraw(Long, BigDecimal)
+ * @see com.github.dimitryivaniuta.bankaccount.service.AccountService#withdraw(Long, MonetaryAmount)
  */
 @Data
 @NoArgsConstructor
@@ -33,7 +39,15 @@ public class WithdrawRequest {
      *   <li>{@link Positive} enforces that the value is > 0.</li>
      * </ul>
      */
-    @NotNull
-    @Positive
+    @NotNull(message = "Amount is required")
+    @Positive(message = "Withdrawal amount must be > 0")
     private BigDecimal amount;
+
+    /**
+     * ISO-4217 currency code of the withdrawal (e.g., "USD").
+     */
+    @NotBlank(message = "Currency is required")
+    @Size(min = 3, max = 3, message = "Currency must be a 3-letter ISO code")
+    private Currency currency;
+
 }

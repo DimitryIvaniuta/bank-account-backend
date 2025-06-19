@@ -6,9 +6,11 @@ import com.github.dimitryivaniuta.bankaccount.dto.DepositRequest;
 import com.github.dimitryivaniuta.bankaccount.dto.StatementResponse;
 import com.github.dimitryivaniuta.bankaccount.dto.UpdateAccountRequest;
 import com.github.dimitryivaniuta.bankaccount.dto.WithdrawRequest;
+import com.github.dimitryivaniuta.bankaccount.model.Account;
 import com.github.dimitryivaniuta.bankaccount.service.AccountService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.javamoney.moneta.Money;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,9 +23,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import javax.money.Monetary;
+import javax.money.MonetaryAmount;
 import java.net.URI;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * REST controller exposing CRUD and domain operations for bank accounts.
@@ -53,7 +56,7 @@ public class AccountController {
     /**
      * Creates a new bank account, optionally depositing the given initial balance.
      *
-     * @param req the request containing the initial balance (must be ≥ 0)
+     * @param req { "initialAmount": 100.00, "currency": "USD" }
      * @return HTTP 201 Created with Location header pointing to the new resource,
      * and the created {@link AccountResponse} in the body
      */
@@ -61,13 +64,22 @@ public class AccountController {
     public ResponseEntity<AccountResponse> create(
             @RequestBody @Valid final CreateAccountRequest req
     ) {
-        var acct = accountService.createAccount(req.getInitialBalance());
+        MonetaryAmount initial = Money.of(req.getInitialAmount(),
+                Monetary.getCurrency(req.getCurrency()));
+        Account acct = accountService.createAccount(initial);
+
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
                 .buildAndExpand(acct.getId())
                 .toUri();
+
         return ResponseEntity.created(location)
-                .body(new AccountResponse(acct.getId(), acct.getBalance(), acct.getCreatedAt()));
+                .body(new AccountResponse(
+                        acct.getId(),
+                        acct.getBalance().getAmount(),
+                        acct.getBalance().getCurrency().getCurrencyCode(),
+                        acct.getCreatedAt()
+                ));
     }
 
     /**
@@ -78,7 +90,10 @@ public class AccountController {
     @GetMapping
     public List<AccountResponse> listAll() {
         return accountService.getAllAccounts().stream()
-                .map(a -> new AccountResponse(a.getId(), a.getBalance(), a.getCreatedAt()))
+                .map(a -> new AccountResponse(a.getId(),
+                        a.getBalance().getAmount(),
+                        a.getBalance().getCurrency().getCurrencyCode(),
+                        a.getCreatedAt()))
                 .toList();
     }
 
@@ -92,7 +107,10 @@ public class AccountController {
     @GetMapping("/{id}")
     public AccountResponse getOne(@PathVariable final Long id) {
         var a = accountService.getAccount(id);
-        return new AccountResponse(a.getId(), a.getBalance(), a.getCreatedAt());
+        return new AccountResponse(a.getId(),
+                a.getBalance().getAmount(),
+                a.getBalance().getCurrency().getCurrencyCode(),
+                a.getCreatedAt());
     }
 
     /**
@@ -103,7 +121,7 @@ public class AccountController {
      * </p>
      *
      * @param id  the account ID to update
-     * @param req the request containing the new desired balance (must be ≥ 0)
+     * @param req { "targetAmount": 150.00, "currency": "EUR" }
      * @return the updated {@link AccountResponse}
      * @throws IllegalStateException    on insufficient funds when decreasing balance
      * @throws IllegalArgumentException if no account exists with the given ID
@@ -113,10 +131,16 @@ public class AccountController {
             @PathVariable final Long id,
             @RequestBody @Valid final UpdateAccountRequest req
     ) {
-        var a = accountService.updateAccountBalance(id, req.getNewBalance());
-        return new AccountResponse(a.getId(), a.getBalance(), a.getCreatedAt());
+        MonetaryAmount target = Money.of(req.getTargetAmount(),
+                Monetary.getCurrency(req.getCurrency()));
+        Account a = accountService.updateAccountBalance(id, target);
+        return new AccountResponse(
+                a.getId(),
+                a.getBalance().getAmount(),
+                a.getBalance().getCurrency().getCurrencyCode(),
+                a.getCreatedAt()
+        );
     }
-
     /**
      * Deletes an account and all its associated operations.
      *
@@ -142,7 +166,9 @@ public class AccountController {
             @PathVariable final Long id,
             @RequestBody @Valid final DepositRequest req
     ) {
-        accountService.deposit(id, req.getAmount());
+        MonetaryAmount amt = Money.of(req.getAmount(),
+                Monetary.getCurrency(req.getCurrency()));
+        accountService.deposit(id, amt);
         return ResponseEntity.ok().build();
     }
 
@@ -160,7 +186,9 @@ public class AccountController {
             @PathVariable final Long id,
             @RequestBody @Valid final WithdrawRequest req
     ) {
-        accountService.withdraw(id, req.getAmount());
+        MonetaryAmount amt = Money.of(req.getAmount(),
+                Monetary.getCurrency(req.getCurrency().getCurrencyCode()));
+        accountService.withdraw(id, amt);
         return ResponseEntity.ok().build();
     }
 
@@ -179,8 +207,9 @@ public class AccountController {
                 .map(op -> new StatementResponse(
                         op.getOperationDate(),
                         op.getType().name(),
-                        op.getAmount(),
-                        op.getBalanceAfter()
+                        op.getFunds().getAmount(),
+                        op.getFunds().getCurrency().getCurrencyCode(),
+                        op.getBalanceAfter().getAmount()
                 ))
                 .toList();
         return ResponseEntity.ok(resp);

@@ -7,6 +7,7 @@ import com.github.dimitryivaniuta.bankaccount.model.OperationType;
 import com.github.dimitryivaniuta.bankaccount.repository.AccountRepository;
 import com.github.dimitryivaniuta.bankaccount.repository.OperationRepository;
 import com.github.dimitryivaniuta.bankaccount.service.AccountService;
+import org.javamoney.moneta.Money;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
+import javax.money.MonetaryAmount;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -95,21 +97,25 @@ class AccountIntegrationTest {
     @Test
     @DisplayName("Create account with initial balance")
     void createAccountWithInitialBalance() {
-        Account acct = accountService.createAccount(new BigDecimal("123.45"));
+        MonetaryAmount initial = Money.of(BigDecimal.valueOf(123.45), "EUR");
+        Account acct = accountService.createAccount(initial);
 
-        // Verify account row. Account persisted
+        // Account persisted with generated ID and correct balance
         assertThat(acct.getId()).isNotNull();
-        assertThat(acct.getBalance()).isEqualByComparingTo("123.45");
+        assertThat(acct.getBalance().toMonetaryAmount())
+                .isEqualByComparingTo(initial);
 
-        // Verify exactly one deposit operation was recorded. One operation recorded
-        List<Operation> ops = operationRepository.findByAccountIdOrderByOperationDateAsc(acct.getId());
-        assertThatList(ops)
-                .hasSize(1)
-                .allSatisfy(op -> {
-                    assertThat(op.getType()).isEqualTo(OperationType.DEPOSIT);
-                    assertThat(op.getAmount()).isEqualByComparingTo(BigDecimal.valueOf(123.45));
-                    assertThat(op.getBalanceAfter()).isEqualByComparingTo(BigDecimal.valueOf(123.45));
-                });
+        // Exactly one deposit operation in statement
+        List<Operation> ops = operationRepository
+                .findByAccountIdOrderByOperationDateAsc(acct.getId());
+        assertThat(ops).hasSize(1);
+
+        Operation op = ops.getFirst();
+        assertThat(op.getType()).isEqualTo(OperationType.DEPOSIT);
+        assertThat(op.getFunds().toMonetaryAmount())
+                .isEqualByComparingTo(initial);
+        assertThat(op.getBalanceAfter().toMonetaryAmount())
+                .isEqualByComparingTo(initial);
     }
 
     /**
@@ -123,32 +129,38 @@ class AccountIntegrationTest {
     @Test
     @DisplayName("Deposit, withdraw, and verify statement")
     void depositWithdrawAndStatement() {
-        // Given an empty account
-        Account acct = accountService.createAccount(BigDecimal.ZERO);
+        // Given a new account with zero balance
+        MonetaryAmount zero = Money.of(0, "EUR");
+        Account acct = accountService.createAccount(zero);
 
-        // When: perform domain operations
-        accountService.deposit(acct.getId(), new BigDecimal("200.00"));
-        accountService.withdraw(acct.getId(), new BigDecimal("50.00"));
+        // Perform operations
+        MonetaryAmount depositAmt = Money.of(200, "EUR");
+        MonetaryAmount withdrawAmt = Money.of(50, "EUR");
+        accountService.deposit(acct.getId(), depositAmt);
+        accountService.withdraw(acct.getId(), withdrawAmt);
 
-        // Then: final balance check
+        // Final balance should be 150 EUR
         Account updated = accountRepository.findById(acct.getId()).orElseThrow();
-        assertThat(updated.getBalance()).isEqualByComparingTo("150.00");
+        assertThat(updated.getBalance().toMonetaryAmount())
+                .isEqualByComparingTo(Money.of(150, "EUR"));
 
-        // And: statement correctness
+        // Statement entries
         List<Operation> ops = accountService.getStatement(acct.getId());
         assertThat(ops).hasSize(2);
 
-        // First operation: deposit
         Operation first = ops.getFirst();
         assertThat(first.getType()).isEqualTo(OperationType.DEPOSIT);
-        assertThat(first.getAmount()).isEqualByComparingTo("200.00");
-        assertThat(first.getBalanceAfter()).isEqualByComparingTo("200.00");
+        assertThat(first.getFunds().toMonetaryAmount())
+                .isEqualByComparingTo(depositAmt);
+        assertThat(first.getBalanceAfter().toMonetaryAmount())
+                .isEqualByComparingTo(depositAmt);
 
-        // Second operation: withdrawal
         Operation second = ops.get(1);
         assertThat(second.getType()).isEqualTo(OperationType.WITHDRAWAL);
-        assertThat(second.getAmount()).isEqualByComparingTo("-50.00");
-        assertThat(second.getBalanceAfter()).isEqualByComparingTo("150.00");
+        assertThat(second.getFunds().toMonetaryAmount())
+                .isEqualByComparingTo(withdrawAmt.negate());
+        assertThat(second.getBalanceAfter().toMonetaryAmount())
+                .isEqualByComparingTo(Money.of(150, "EUR"));
     }
 
     /**
@@ -160,22 +172,29 @@ class AccountIntegrationTest {
     @Test
     @DisplayName("Update account balance via delta (deposit/withdraw)")
     void updateAccountBalanceViaDelta() {
-        Account acct = accountService.createAccount(new BigDecimal("100.00"));
+        MonetaryAmount start = Money.of(BigDecimal.valueOf(100.00), "EUR");
+        Account acct = accountService.createAccount(start);
 
-        // Increase to 180.00
-        Account up1 = accountService.updateAccountBalance(acct.getId(), new BigDecimal("180.00"));
-        assertThat(up1.getBalance()).isEqualByComparingTo("180.00");
+        // Increase to 180
+        MonetaryAmount target1 = Money.of(BigDecimal.valueOf(180.00), "EUR");
+        Account up1 = accountService.updateAccountBalance(acct.getId(), target1);
+        assertThat(up1.getBalance().toMonetaryAmount())
+                .isEqualByComparingTo(target1);
         List<Operation> ops1 = accountService.getStatement(acct.getId());
-        assertThat(ops1).hasSize(2);  // initial deposit + this deposit
-        assertThat(ops1.get(1).getAmount()).isEqualByComparingTo("80.00");
+        assertThat(ops1).hasSize(2);
+        assertThat(ops1.get(1).getFunds().toMonetaryAmount())
+                .isEqualByComparingTo(Money.of(80, "EUR"));
         assertThat(ops1.get(1).getType()).isEqualTo(OperationType.DEPOSIT);
 
-        // Decrease to 140.00
-        Account up2 = accountService.updateAccountBalance(acct.getId(), new BigDecimal("140.00"));
-        assertThat(up2.getBalance()).isEqualByComparingTo("140.00");
+        // Decrease to 140
+        MonetaryAmount target2 = Money.of(BigDecimal.valueOf(140.00), "EUR");
+        Account up2 = accountService.updateAccountBalance(acct.getId(), target2);
+        assertThat(up2.getBalance().toMonetaryAmount())
+                .isEqualByComparingTo(target2);
         List<Operation> ops2 = accountService.getStatement(acct.getId());
         assertThat(ops2).hasSize(3);
-        assertThat(ops2.get(2).getAmount()).isEqualByComparingTo("-40.00");
+        assertThat(ops2.get(2).getFunds().toMonetaryAmount())
+                .isEqualByComparingTo(Money.of(-40, "EUR"));
         assertThat(ops2.get(2).getType()).isEqualTo(OperationType.WITHDRAWAL);
     }
 
@@ -189,8 +208,9 @@ class AccountIntegrationTest {
     @DisplayName("Delete account and its operations")
     void deleteAccountAndOperations() {
         // Given an account with two operations
-        Account acct = accountService.createAccount(new BigDecimal("50.00"));
-        accountService.deposit(acct.getId(), new BigDecimal("25.00"));
+        MonetaryAmount initial = Money.of(BigDecimal.valueOf(50.00), "EUR");
+        Account acct = accountService.createAccount(initial);
+        accountService.deposit(acct.getId(), Money.of(25, "EUR"));
         List<Operation> before = accountService.getStatement(acct.getId());
         assertThat(before).hasSize(2);
 
